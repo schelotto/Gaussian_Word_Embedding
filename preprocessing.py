@@ -17,9 +17,9 @@ def parse_args():
     parser.add_argument('--data_dir', type=str, default='./data/', help="data directory path")
     parser.add_argument('--corpus', type=str, default='./data/text8', help="corpus path")
     parser.add_argument('--unk', type=str, default='<unk>', help="UNK token")
-    parser.add_argument('--window', type=int, default=7, help="window size")
+    parser.add_argument('--window', type=int, default=5, help="window size")
     parser.add_argument('--max_vocab', type=int, default=200000, help="maximum number of vocab")
-    parser.add_argument('--batch_size', type=int, default=1024, help="batch size of the dataset")
+    parser.add_argument('--batch_size', type=int, default=4096, help="batch size of the dataset")
     parser.add_argument('--n_negs', type=int, default=20, help="negative samples")
     return parser.parse_args()
 
@@ -70,7 +70,7 @@ class dataset(object):
 
         self.data = []
         sent = [self.stoi[x] if x in self.vocab else self.stoi[self.unk] for x in sent]
-        stride = self.window // 2 + self.window % 2
+        stride = self.window
         for i in tqdm(range(len(sent) // stride - self.window)):
             iword, owords = self.skipgram(sent, i * stride + self.window)
             if (iword != self.unk) & all([oword != self.unk for oword in owords]):

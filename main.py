@@ -44,12 +44,6 @@ class GaussianEmbedding(nn.Module):
         self.mu_neg = nn.Embedding(self.vocab_size + 1, self.embed_dim)
         self.log_sigma_neg = nn.Embedding(self.vocab_size + 1, self.embed_dim)
 
-    def regularize_mu(self, mu):
-        l2_mu = torch.norm(mu, 2, 1)
-        ind = (l2_mu > self.C)
-        reg = (l2_mu <= self.C).float() + ind.float() * (self.C / l2_mu)
-        return mu * reg.view(-1, 1).expand_as(mu)
-
     def kl_energy(self, mu_i, mu_j, sigma_i, sigma_j):
         """
         :param mu_i: mu of word i: [batch, embed]
@@ -60,9 +54,6 @@ class GaussianEmbedding(nn.Module):
         """
 
         assert mu_i.size()[0] == mu_j.size()[0]
-
-        mu_i = self.regularize_mu(mu_i)
-        mu_j = self.regularize_mu(mu_j)
 
         det_fac = torch.sum(torch.log(sigma_i), 1) - torch.sum(torch.log(sigma_j), 1)
         trace_fac = torch.sum(sigma_j / sigma_i, 1)
@@ -80,9 +71,6 @@ class GaussianEmbedding(nn.Module):
 
         assert mu_i.size()[0] == mu_j.size()[0]
 
-        mu_i = self.regularize_mu(mu_i)
-        mu_j = self.regularize_mu(mu_j)
-
         det_fac = torch.sum(torch.log(sigma_i + sigma_j), 1)
         diff_mu = torch.sum((mu_i - mu_j) ** 2 / (sigma_j + sigma_i), 1)
         return torch.exp(-0.5 * (det_fac + diff_mu + self.embed_dim * torch.log(2 * math.pi)))
@@ -97,9 +85,6 @@ class GaussianEmbedding(nn.Module):
         """
         assert mu_i.size()[0] == mu_j.size()[0]
 
-        mu_i = self.regularize_mu(mu_i)
-        mu_j = self.regularize_mu(mu_j)
-
         mu_diff = torch.sum((mu_i - mu_j) ** 2, 1)
         sigma_diff = torch.sum((sigma_i + sigma_j - 2 * (sigma_i * sigma_j) ** 0.5), 1)
         return -(mu_diff + sigma_diff) ** 0.5
@@ -110,7 +95,12 @@ class GaussianEmbedding(nn.Module):
         for p in itertools.chain(self.log_sigma.parameters(),
                                  self.log_sigma_neg.parameters(),
                                  self.log_sigma_pos.parameters()):
-            p.data.clamp_(torch.log(self.sigma_min), torch.log(self.sigma_max))
+            p.data.clamp_(math.log(self.sigma_min), math.log(self.sigma_max))
+
+        for p in itertools.chain(self.mu.parameters(),
+                                 self.mu_neg.parameters(),
+                                 self.mu_pos.parameters()):
+            p.data.clamp_(-math.sqrt(self.C), math.sqrt(self.C))
 
         words_n = torch.multinomial(self.dset.weights, batch_size, replacement=True)
         words_n = Variable(words_n).cuda()
@@ -137,9 +127,9 @@ g_emb = g_emb.cuda()
 optimizer = torch.optim.Adam(g_emb.parameters(), lr=0.001)
 
 global_step = 0
-for epoch in tqdm(range(args.epochs)):
+for epoch in range(args.epochs):
     step = 0
-    for (words_i, words_j) in g_emb.dset.dsetIter:
+    for (words_i, words_j) in tqdm(g_emb.dset.dsetIter):
         optimizer.zero_grad()
         words_i = Variable(words_i).cuda()
         words_j = Variable(words_j).cuda()
@@ -150,13 +140,13 @@ for epoch in tqdm(range(args.epochs)):
         step += 1
         global_step += 1
 
-        if (global_step + 1) % 1000 == 0:
+        if (global_step + 1) % (len(g_emb.dset.dsetIter) // 10) == 0:
             print('Epoch: [%d/%d], Step: [%d/%d], Loss: %.2f' % (
             epoch + 1, args.epochs, step + 1, len(g_emb.dset.dsetIter), loss.data[0]))
 
-    word_embedding = g_emb.mu.weight.cpu().numpy()
+    word_embedding = g_emb.mu.weight.cpu().data.numpy()
     with open(os.path.join('embedding', 'word_embedding.txt'), 'w', encoding='utf-8') as f:
-        f.write(' '.join([str(len(g_emb.dset.word)-1), str(args.word_embed_dim)]) + '\n')
+        f.write(' '.join([str(len(g_emb.dset.itos)-1), str(args.embed_dim)]) + '\n')
         for i in range(len(g_emb.dset.itos)):
             if g_emb.dset.itow[i] != '<pad>':
                 embed_i = [g_emb.dset.itos[i]] + list(map(lambda x: '%.5f' % (x), word_embedding[i, :]))
